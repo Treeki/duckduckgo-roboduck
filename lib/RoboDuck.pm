@@ -18,6 +18,7 @@ use HTML::Entities;
 use JSON::XS;
 use POE::Component::IRC::Plugin::SigFail;
 use POE::Component::FastCGI;
+use Data::Dumper;
 
 with qw(
 	MooseX::Daemonize
@@ -72,6 +73,7 @@ sub _build_fcgi {
 
 			[ '/roboduck/gh-commit' => sub {
 					my $request = shift;
+					print $request->query('payload');
 					$self->received_git_commit( decode_json($request->query('payload')) );
 
 					my $response = $request->make_response;
@@ -105,14 +107,14 @@ sub external_message {
 sub received_git_commit {
 	my ( $self, $info ) = @_;
 
-	my ( $repo, $commits, $ref ) = @{$info}{ 'repository', 'commits', 'ref' };
+	my ( $pusher, $repo, $commits, $ref_name ) = @{$info}{ 'pusher', 'repository', 'commits', 'ref_name' };
 
 	my $repo_name = $repo->{name};
-	$ref =~ s{^refs/heads/}{};
+	my $pusher_name = $pusher->{name};
 	my $commit_count = scalar @{$commits};
-	my $plural_verb = ($commit_count == 1) ? ' was' : 's were';
+	my $plural = ($commit_count == 1) ? '' : 's';
 
-	my @messages = ( "[git] $commit_count commit$plural_verb pushed to $repo_name: $ref" );
+	my @messages = ( "[git] $pusher_name pushed $commit_count commit$plural to $repo_name/$ref_name" );
 
 	for (@{$commits}) {
 		my ( $id, $url, $author, $msg ) = @_{ 'id', 'url', 'author', 'message' };
