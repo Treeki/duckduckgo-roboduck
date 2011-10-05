@@ -15,7 +15,9 @@ use Cwd qw( getcwd );
 use File::Spec;
 use Try::Tiny;
 use HTML::Entities;
+use JSON::XS;
 use POE::Component::IRC::Plugin::SigFail;
+use POE::Component::FastCGI;
 
 with qw(
 	MooseX::Daemonize
@@ -39,10 +41,46 @@ plugins (
 after start => sub {
 	my $self = shift;
 	return unless $self->is_daemon;
+
+	$self->fcgi; # init it!
+
 	# Required, elsewhere your POE goes nuts
 	POE::Kernel->has_forked if !$self->foreground;
 	POE::Kernel->run;
 };
+
+has fcgi => (
+	is => 'ro',
+	isa => 'Int',
+	lazy_build => 1
+);
+
+sub _build_fcgi {
+	my $self = shift;
+	POE::Component::FastCGI->new(
+		Port => 6011,
+		Handlers => [
+			[ '/roboduck/msg' => sub {
+					my $request = shift;
+					$self->external_message( $request->query('text') );
+
+					my $response = $request->make_response;
+					$response->header( "Content-Type" => "text/plain" );
+					$response->content( "OK!" );
+					# $response->send; # can't do this because it breaks POCO::FastCGI
+				} ],
+
+			[ '/roboduck/gh-commit' => sub {
+					my $request = shift;
+					$self->received_git_commit( decode_json($request->query('payload')) );
+
+					my $response = $request->make_response;
+					$response->header( "Content-Type" => "text/plain" );
+					$response->content( "OK!" );
+				} ],
+		]
+	);
+}
 
 has ddg => (
 	isa => 'WWW::DuckDuckGo',
@@ -55,6 +93,35 @@ has ddg => (
 has '+pidbase' => (
 	default => sub { getcwd },
 );
+
+sub external_message {
+	my ( $self, $msg ) = @_;
+
+	for (@{$self->get_channels}) {
+		$self->privmsg( $_ => $msg );
+	}
+}
+
+sub received_git_commit {
+	my ( $self, $info ) = @_;
+
+	my ( $repo, $commits, $ref ) = @{$info}{ 'repository', 'commits', 'ref' };
+
+	my $repo_name = $repo->{name};
+	$ref =~ s{^refs/heads/}{};
+	my $commit_count = scalar @{$commits};
+	my $plural_verb = ($commit_count == 1) ? ' was' : 's were';
+
+	my @messages = ( "[git] $commit_count commit$plural_verb pushed to $repo_name: $ref" );
+
+	for (@{$commits}) {
+		my ( $id, $url, $author, $msg ) = @_{ 'id', 'url', 'author', 'message' };
+		my $short_id = substr $id, 0, 7;
+		my $author_name = $author->{name};
+
+		push @messages, "[$short_id] $author_name - $msg ($url)";
+	}
+}
 
 event irc_public => sub {
 	my ( $self, $nickstr, $channels, $msg ) = @_[ OBJECT, ARG0, ARG1, ARG2 ];
