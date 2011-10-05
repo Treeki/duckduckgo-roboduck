@@ -107,21 +107,28 @@ sub external_message {
 sub received_git_commit {
 	my ( $self, $info ) = @_;
 
-	my ( $pusher, $repo, $commits, $ref_name ) = @{$info}{ 'pusher', 'repository', 'commits', 'ref_name' };
+	my ( $pusher, $repo, $commits, $ref ) = @{$info}{ 'pusher', 'repository', 'commits', 'ref' };
+	$ref =~ s{^refs/heads/}{};
 
 	my $repo_name = $repo->{name};
 	my $pusher_name = $pusher->{name};
 	my $commit_count = scalar @{$commits};
 	my $plural = ($commit_count == 1) ? '' : 's';
 
-	my @messages = ( "[git] $pusher_name pushed $commit_count commit$plural to $repo_name/$ref_name" );
+	my @messages = ( "[git] $pusher_name pushed $commit_count commit$plural to $repo_name/$ref" );
 
 	for (@{$commits}) {
-		my ( $id, $url, $author, $msg ) = @_{ 'id', 'url', 'author', 'message' };
+		my ( $id, $url, $author, $msg ) = @{$_}{ 'id', 'url', 'author', 'message' };
 		my $short_id = substr $id, 0, 7;
 		my $author_name = $author->{name};
 
 		push @messages, "[$short_id] $author_name - $msg ($url)";
+	}
+
+	for my $channel (@{$self->get_channels}) {
+		for (@messages) {
+			$self->privmsg( $channel => $_ );
+		}
 	}
 }
 
