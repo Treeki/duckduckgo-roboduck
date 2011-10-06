@@ -146,6 +146,7 @@ sub received_git_commit {
 		$self->shorten->shorten({
 				url => $url,
 				event => 'announce_shortened_url',
+				session => $self->get_session_id,
 				_message => $commit_message
 			});
 	}
