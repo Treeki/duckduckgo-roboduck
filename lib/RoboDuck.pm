@@ -17,8 +17,8 @@ use Try::Tiny;
 use HTML::Entities;
 use JSON::XS;
 use POE::Component::IRC::Plugin::SigFail;
+use POE::Component::WWW::Shorten;
 use POE::Component::FastCGI;
-use Data::Dumper;
 
 with qw(
 	MooseX::Daemonize
@@ -53,6 +53,7 @@ after start => sub {
 has fcgi => (
 	is => 'ro',
 	isa => 'Int',
+	traits => [ 'NoGetopt' ],
 	lazy_build => 1
 );
 
@@ -81,6 +82,21 @@ sub _build_fcgi {
 					$response->content( "OK!" );
 				} ],
 		]
+	);
+}
+
+has shorten => (
+	is => 'ro',
+	isa => 'POE::Component::WWW::Shorten',
+	traits => [ 'NoGetopt' ],
+	lazy_build => 1
+);
+
+sub _build_shorten {
+	my $self = shift;
+	POE::Component::WWW::Shorten->spawn(
+		alias => 'shorten',
+		type => 'IsGd'
 	);
 }
 
@@ -115,22 +131,36 @@ sub received_git_commit {
 	my $commit_count = scalar @{$commits};
 	my $plural = ($commit_count == 1) ? '' : 's';
 
-	my @messages = ( "[git] $pusher_name pushed $commit_count commit$plural to $repo_name/$ref" );
+	my $initial_msg = "[git] $pusher_name pushed $commit_count commit$plural to $repo_name/$ref";
+
+	for (@{$self->get_channels}) {
+		$self->privmsg( $_ => $initial_msg );
+	}
 
 	for (@{$commits}) {
 		my ( $id, $url, $author, $msg ) = @{$_}{ 'id', 'url', 'author', 'message' };
 		my $short_id = substr $id, 0, 7;
 		my $author_name = $author->{name};
 
-		push @messages, "[$short_id] $author_name - $msg ($url)";
-	}
-
-	for my $channel (@{$self->get_channels}) {
-		for (@messages) {
-			$self->privmsg( $channel => $_ );
-		}
+		my $commit_message = "[$short_id] $author_name - $msg SHORT_URL";
+		$self->shorten->shorten({
+				url => $url,
+				event => 'announce_shortened_url',
+				_message => $commit_message
+			});
 	}
 }
+
+event announce_shortened_url => sub {
+	my ( $self, $returned ) = @_[ OBJECT, ARG0 ];
+
+	my ( $message, $url ) = @{$returned}{ '_message', 'short' };
+	$message =~ s/SHORT_URL/$url/;
+
+	for (@{$self->get_channels}) {
+		$self->privmsg( $_ => $message );
+	}
+};
 
 event irc_public => sub {
 	my ( $self, $nickstr, $channels, $msg ) = @_[ OBJECT, ARG0, ARG1, ARG2 ];
