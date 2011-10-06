@@ -94,9 +94,20 @@ has shorten => (
 
 sub _build_shorten {
 	my $self = shift;
+
+	my $type;
+	my @params;
+	if ( defined $ENV{ROBODUCK_BITLY_USERNAME} && defined $ENV{ROBODUCK_BITLY_KEY} ) {
+		$type = 'Bitly';
+		@params = ($ENV{ROBODUCK_BITLY_USERNAME}, $ENV{ROBODUCK_BITLY_KEY});
+	} else {
+		$type = 'IsGd';
+	}
+
 	POE::Component::WWW::Shorten->spawn(
 		alias => 'shorten',
-		type => 'IsGd'
+		type => $type,
+		params => \@params
 	);
 }
 
